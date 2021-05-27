@@ -29,9 +29,28 @@ namespace Microsoft.AspNetCore.Mvc.Api.Analyzers
             CancellationToken cancellationToken,
             out IList<ActualApiResponseMetadata> actualResponseMetadata)
         {
-            actualResponseMetadata = new List<ActualApiResponseMetadata>();
+            var localActualResponseMetadata = new List<ActualApiResponseMetadata>();
 
             var allReturnStatementsReadable = true;
+            var localSymbolCache = symbolCache;
+
+            void AnalyzeResponseExpression(ExpressionSyntax expressionSyntax)
+            {
+                var responseMetadata = InspectReturnStatementSyntax(
+                    localSymbolCache,
+                    semanticModel,
+                    expressionSyntax,
+                    cancellationToken);
+
+                if (responseMetadata != null)
+                {
+                    localActualResponseMetadata.Add(responseMetadata.Value);
+                }
+                else
+                {
+                    allReturnStatementsReadable = false;
+                }
+            }
 
             foreach (var returnStatementSyntax in methodSyntax.DescendantNodes(_shouldDescendIntoChildren).OfType<ReturnStatementSyntax>())
             {
@@ -42,21 +61,23 @@ namespace Microsoft.AspNetCore.Mvc.Api.Analyzers
                     continue;
                 }
 
-                var responseMetadata = InspectReturnStatementSyntax(
-                    symbolCache,
-                    semanticModel,
-                    returnStatementSyntax,
-                    cancellationToken);
+                AnalyzeResponseExpression(returnStatementSyntax.Expression);
+            }
 
-                if (responseMetadata != null)
+            if (methodSyntax.ExpressionBody != null)
+            {
+                if (methodSyntax.ExpressionBody.IsMissing || methodSyntax.ExpressionBody.Expression.IsMissing)
                 {
-                    actualResponseMetadata.Add(responseMetadata.Value);
+                    // Ignore malformed expression bodies.
+                    allReturnStatementsReadable = false;
                 }
                 else
                 {
-                    allReturnStatementsReadable = false;
+                    AnalyzeResponseExpression(methodSyntax.ExpressionBody.Expression);
                 }
             }
+
+            actualResponseMetadata = localActualResponseMetadata;
 
             return allReturnStatementsReadable;
         }
@@ -64,10 +85,9 @@ namespace Microsoft.AspNetCore.Mvc.Api.Analyzers
         internal static ActualApiResponseMetadata? InspectReturnStatementSyntax(
             in ApiControllerSymbolCache symbolCache,
             SemanticModel semanticModel,
-            ReturnStatementSyntax returnStatementSyntax,
+            ExpressionSyntax returnExpression,
             CancellationToken cancellationToken)
         {
-            var returnExpression = returnStatementSyntax.Expression;
             var typeInfo = semanticModel.GetTypeInfo(returnExpression, cancellationToken);
             if (typeInfo.Type == null || typeInfo.Type.TypeKind == TypeKind.Error)
             {
@@ -79,7 +99,7 @@ namespace Microsoft.AspNetCore.Mvc.Api.Analyzers
             if (!symbolCache.IActionResult.IsAssignableFrom(statementReturnType))
             {
                 // Return expression is not an instance of IActionResult. Must be returning the "model".
-                return new ActualApiResponseMetadata(returnStatementSyntax, statementReturnType);
+                return new ActualApiResponseMetadata(returnExpression, statementReturnType);
             }
 
             var defaultStatusCodeAttribute = statementReturnType
@@ -120,7 +140,7 @@ namespace Microsoft.AspNetCore.Mvc.Api.Analyzers
                 return null;
             }
 
-            return new ActualApiResponseMetadata(returnStatementSyntax, statusCode.Value, returnType);
+            return new ActualApiResponseMetadata(returnExpression, statusCode.Value, returnType);
         }
 
         private static (int? statusCode, ITypeSymbol? returnType) InspectInitializers(

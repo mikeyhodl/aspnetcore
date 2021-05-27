@@ -27,11 +27,13 @@ namespace Microsoft.AspNetCore.Mvc.Api.Analyzers.TestFiles.ActualApiResponseMeta
 
             if (id == 0)
             {
-                /*MM1*/return NoContent();
+                return /*MM1*/NoContent();
             }
 
-            /*MM2*/return new TryGetActualResponseMetadataModel();
+            return /*MM2*/new TryGetActualResponseMetadataModel();
         }
+
+        public IActionResult ActionWithActionResultOfTReturningOkResultExpression() => Ok();
     }
 
     public class TryGetActualResponseMetadataModel { }
